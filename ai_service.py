@@ -1,9 +1,20 @@
 import os
+import re
+import unicodedata
 from pypdf import PdfReader
 from langchain_classic.agents import AgentExecutor, create_react_agent
 from langchain_core.prompts import PromptTemplate
 from langchain_core.tools import Tool
 from langchain_google_genai import ChatGoogleGenerativeAI
+
+def normalize_text(text: str) -> str:
+    """Hàm chuẩn hóa: Khử dấu tiếng Việt và xóa khoảng trắng thừa để so khớp tuyệt đối."""
+    if not text:
+        return ""
+    # Ép về chữ không dấu (ví dụ: "Bài 5" -> "bai 5")
+    text_no_accents = unicodedata.normalize('NFKD', str(text)).encode('ASCII', 'ignore').decode('utf-8')
+    # Xóa dấu xuống dòng và các khoảng trắng kép
+    return re.sub(r'\s+', ' ', text_no_accents.lower()).strip()
 
 def build_executor(api_key: str, model: str):
     # Khởi tạo LLM chính điều phối Agent
@@ -14,8 +25,7 @@ def build_executor(api_key: str, model: str):
         max_retries=2,
     )
 
-    # --- TOOL 1: Quét file PDF Toán 6 ---
-    # --- TOOL 1 (HÀNG THẬT CẢI TIẾN): Quét file PDF Toán 6 thông minh ---
+    # --- TOOL 1 (HÀNG THẬT V2): Quét file PDF Toán 6 với tính năng Chuẩn hóa ---
     def read_original_data(query: str) -> str:
         """Luôn dùng công cụ này đầu tiên để lấy lý thuyết Toán 6 gốc từ sách."""
         file_path = "toan_lop_6_tap_1.pdf"
@@ -24,30 +34,27 @@ def build_executor(api_key: str, model: str):
         
         try:
             reader = PdfReader(file_path)
-            # Kỹ thuật chuẩn hóa: Xóa toàn bộ khoảng trắng thừa và dấu xuống dòng của từ khóa
-            query_clean = " ".join(query.lower().split())
+            # 1. Chuẩn hóa từ khóa của học sinh
+            query_clean = normalize_text(query)
             
             for i, page in enumerate(reader.pages):
-                text = page.extract_text()
-                if text:
-                    # Chuẩn hóa toàn bộ trang sách PDF để đưa về cùng 1 chuẩn với từ khóa
-                    text_clean = " ".join(text.lower().split())
+                raw_text = page.extract_text()
+                if raw_text:
+                    # 2. Chuẩn hóa toàn bộ text của trang sách PDF để tìm kiếm
+                    page_clean = normalize_text(raw_text)
                     
-                    # So khớp linh hoạt hơn
-                    if query_clean in text_clean:
-                        idx = text_clean.find(query_clean)
-                        start = max(0, idx - 200)
-                        end = min(len(text_clean), idx + 800)
-                        snippet = text_clean[start:end]
-                        return f"Đã tìm thấy lý thuyết ở trang {i+1} SGK:\n...{snippet}..."
+                    # 3. So khớp không dấu
+                    if query_clean in page_clean:
+                        # Nếu trúng mục tiêu, giao toàn bộ nội dung thô của trang đó (cắt bớt để tránh vượt giới hạn token)
+                        snippet = raw_text.replace('\n', ' ')[:2000]
+                        return f"Đã tìm thấy dữ liệu ở trang {i+1} SGK. Dưới đây là nội dung trang sách:\n{snippet}"
             
-            # Bơm thêm định hướng cho AI nếu vẫn không tìm thấy
-            return f"Đã quét 100% sách nhưng không tìm thấy cụm từ '{query}'. Yêu cầu học sinh cung cấp tên bài học cụ thể thay vì chỉ nói số bài (ví dụ: hỏi 'Quy tắc dấu ngoặc' thay vì 'bài 15')."
-            
+            # Bơm định hướng nếu không tìm thấy
+            return f"Đã quét 100% sách nhưng không thấy cụm từ '{query}'. Yêu cầu học sinh cung cấp tên chủ đề cụ thể (ví dụ: tập hợp, lũy thừa, số nguyên âm)."
         except Exception as e:
-            return f"Lỗi khi đọc file PDF: {e}"
+            return f"Lỗi đọc PDF: {e}"
 
-    # --- TOOL 2: Gọi Gemini phụ sinh bài tập ---
+    # --- TOOL 2 (HÀNG THẬT): Gọi Gemini phụ sinh bài tập ---
     def generate_similar_examples(query: str) -> str:
         """Dùng công cụ này sau khi đã có lý thuyết để tạo bài tập ví dụ."""
         llm_phu = ChatGoogleGenerativeAI(model=model, google_api_key=api_key, temperature=0.5)
@@ -55,7 +62,7 @@ def build_executor(api_key: str, model: str):
         response = llm_phu.invoke(prompt)
         return response.content
 
-    # --- TOOL 3: Gọi Gemini phụ sinh đề kiểm tra ---
+    # --- TOOL 3 (HÀNG THẬT): Gọi Gemini phụ sinh đề kiểm tra ---
     def create_review_test(query: str) -> str:
         """Dùng công cụ này cuối cùng để tạo bài test 15 phút cho học sinh."""
         llm_phu = ChatGoogleGenerativeAI(model=model, google_api_key=api_key, temperature=0.5)
@@ -69,12 +76,13 @@ def build_executor(api_key: str, model: str):
         Tool(name="CreateTest", func=create_review_test, description="Dùng công cụ này cuối cùng để tạo bài test 15 phút cho học sinh.")
     ]
 
+    # --- HỆ THỐNG PROMPT MỚI: Kỷ luật sắt với AI ---
     prompt = PromptTemplate.from_template("""
 Bạn là một AI Agent đóng vai trò Gia sư Toán lớp 6. 
 Quy tắc dạy học BẮT BUỘC:
 1. Bạn đang dạy theo đúng MỘT cuốn sách duy nhất (đã được nạp trong công cụ ReadData). TUYỆT ĐỐI KHÔNG phân bua hay hỏi học sinh về các bộ sách khác (Kết nối tri thức, Cánh diều...).
-2. Khi học sinh hỏi bất cứ chủ đề hay số bài nào (ví dụ: "bài 15", "số nguyên"), BẠN PHẢI GỌI CÔNG CỤ ReadData để quét tài liệu gốc trước khi tự suy diễn.
-3. Luôn dạy bài cơ bản trước, tuyệt đối không đưa bài tập nâng cao trừ khi yêu cầu.
+2. Khi học sinh hỏi bất cứ chủ đề hay số bài nào (ví dụ: "bài 5", "số nguyên"), BẠN PHẢI GỌI CÔNG CỤ ReadData để quét tài liệu gốc trước khi tự suy diễn.
+3. Luôn dạy bài cơ bản trước, tuyệt đối không đưa bài tập nâng cao trừ khi học sinh yêu cầu.
 
 Lịch sử chat: {chat_history}
 
@@ -84,7 +92,7 @@ Bạn có các công cụ sau:
 BẠN BẮT BUỘC PHẢI DÙNG ĐỊNH DẠNG NÀY ĐỂ GỌI CÔNG CỤ (Suy nghĩ -> Hành động -> Kết quả):
 Thought: Bạn đang nghĩ xem cần làm bước gì tiếp theo
 Action: Tên công cụ (chỉ được chọn 1 trong: [{tool_names}])
-Action Input: Từ khóa cần tìm (ví dụ: bài 15)
+Action Input: Từ khóa cần tìm (ví dụ: bài 5)
 Observation: Kết quả trả về từ công cụ
 (Lặp lại chu trình này cho đến khi đủ thông tin)
 
