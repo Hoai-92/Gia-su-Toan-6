@@ -7,7 +7,7 @@ QUESTION = "Thầy ơi, hôm nay dạy em Bài 1 về Tập hợp nhé. Cho em x
 
 st.set_page_config(page_title="Gia sư Toán 6 AI", page_icon="🎓", layout="centered")
 st.title("🎓 Gia sư Toán 6 AI Agent")
-st.caption("Agent tự động: Trích xuất lý thuyết → Sinh ví dụ → Tạo đề kiểm tra")
+st.caption("Agent tự động: Trích xuất sách thật → Sinh ví dụ AI → Tạo đề kiểm tra AI")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -35,7 +35,7 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         render_message(message)
 
-quick = st.button("🚀 Chạy thử Demo: Dạy bài Tập Hợp Toán 6", use_container_width=True)
+quick = st.button("🚀 Chạy Demo Đồ Án Cuối Cùng", use_container_width=True)
 typed = st.chat_input("Hỏi gia sư bài toán bạn cần học...")
 question = QUESTION if quick else typed
 
@@ -49,9 +49,8 @@ if question:
             st.markdown(question)
         with st.chat_message("assistant"):
             try:
-                with st.spinner("Gia sư đang tra cứu sách và soạn bài..."):
+                with st.spinner("Gia sư đang lật sách PDF và soạn bài..."):
                     from ai_service import answer_question
-                    # Dùng mã khóa hoạt động bình thường của bạn
                     result = answer_question(question, previous, api_key.strip(), model.strip())
                 
                 message = {

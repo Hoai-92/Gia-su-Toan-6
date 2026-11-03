@@ -1,35 +1,56 @@
-import json
+import os
+from pypdf import PdfReader
 from langchain_classic.agents import AgentExecutor, create_react_agent
 from langchain_core.prompts import PromptTemplate
 from langchain_core.tools import Tool
 from langchain_google_genai import ChatGoogleGenerativeAI
 
-# --- TEST TOOL 1: Đọc dữ liệu gốc ---
-def read_original_data(query: str) -> str:
-    """Đọc lý thuyết từ sách giáo khoa Toán 6."""
-    query = query.lower()
-    if "tập hợp" in query:
-        return "Bài 1: Tập hợp. Khái niệm cốt lõi: Tập hợp là sự gom nhóm các đối tượng (phần tử) có chung tính chất. Ký hiệu thường dùng: A = {1, 2, 3}. Mỗi phần tử liệt kê 1 lần, cách nhau bởi dấu phẩy hoặc chấm phẩy."
-    return f"Đã tìm thấy lý thuyết cơ bản cho phần: {query} trong SGK Toán 6 Tập 1."
-
-# --- TEST TOOL 2: Sinh ví dụ tương tự ---
-def generate_similar_examples(query: str) -> str:
-    """Tạo các bài tập ví dụ cơ bản cho học sinh làm quen."""
-    return f"Ví dụ minh họa cho phần '{query}': Hãy viết tập hợp B gồm các số tự nhiên chẵn nhỏ hơn 10. Đáp án mẫu: B = {{0; 2; 4; 6; 8}}."
-
-# --- TEST TOOL 3: Tạo đề ôn tập ---
-def create_review_test(query: str) -> str:
-    """Tạo đề kiểm tra ôn tập ngắn để củng cố kiến thức."""
-    return f"Đề luyện tập nhanh chủ đề '{query}':\nCâu 1: Viết tập hợp C các chữ cái trong từ 'HANOI'.\nCâu 2: Điền ký hiệu thuộc (∈) hoặc không thuộc (∉) thích hợp: 5 ... {{1, 3, 5, 7}}."
-
 def build_executor(api_key: str, model: str):
-    # Sử dụng Google Gemini thay vì OpenAI
+    # Khởi tạo LLM chính điều phối Agent
     llm = ChatGoogleGenerativeAI(
         model=model,
         google_api_key=api_key,
-        temperature=0.2, # Giữ độ sáng tạo thấp để toán học được chính xác
+        temperature=0.2, # Giữ độ sáng tạo thấp để logic toán học chính xác
         max_retries=2,
     )
+
+    # --- TOOL 1: Quét file PDF Toán 6 ---
+    def read_original_data(query: str) -> str:
+        """Luôn dùng công cụ này đầu tiên để lấy lý thuyết Toán 6 gốc từ sách."""
+        file_path = "toan_lop_6_tap_1.pdf"
+        if not os.path.exists(file_path):
+            return "Lỗi: Không tìm thấy file toan_lop_6_tap_1.pdf trong thư mục."
+        try:
+            reader = PdfReader(file_path)
+            query_lower = query.lower()
+            for i, page in enumerate(reader.pages):
+                text = page.extract_text()
+                if text and query_lower in text.lower():
+                    idx = text.lower().find(query_lower)
+                    # Cắt 200 ký tự trước và 800 ký tự sau chỗ tìm thấy để gom trọn ý
+                    start = max(0, idx - 200)
+                    end = min(len(text), idx + 800)
+                    snippet = text[start:end].replace('\n', ' ')
+                    return f"Đã tìm thấy lý thuyết ở trang {i+1} SGK:\n...{snippet}..."
+            return f"Quét toàn bộ sách nhưng không tìm thấy khái niệm '{query}'."
+        except Exception as e:
+            return f"Lỗi khi đọc file PDF: {e}"
+
+    # --- TOOL 2: Gọi Gemini phụ sinh bài tập ---
+    def generate_similar_examples(query: str) -> str:
+        """Dùng công cụ này sau khi đã có lý thuyết để tạo bài tập ví dụ."""
+        llm_phu = ChatGoogleGenerativeAI(model=model, google_api_key=api_key, temperature=0.5)
+        prompt = f"Dựa trên kiến thức Toán lớp 6, hãy sáng tác 1 ví dụ cơ bản, dễ hiểu về chủ đề '{query}' và kèm theo lời giải chi tiết. Tuyệt đối không cho bài tập nâng cao."
+        response = llm_phu.invoke(prompt)
+        return response.content
+
+    # --- TOOL 3: Gọi Gemini phụ sinh đề kiểm tra ---
+    def create_review_test(query: str) -> str:
+        """Dùng công cụ này cuối cùng để tạo bài test 15 phút cho học sinh."""
+        llm_phu = ChatGoogleGenerativeAI(model=model, google_api_key=api_key, temperature=0.5)
+        prompt = f"Dựa trên kiến thức Toán lớp 6, hãy tạo 1 đề kiểm tra 15 phút (gồm 3 câu hỏi trắc nghiệm hoặc tự luận ngắn) về chủ đề '{query}'. Chỉ đưa ra đề bài, không đưa đáp án."
+        response = llm_phu.invoke(prompt)
+        return response.content
 
     tools = [
         Tool(name="ReadData", func=read_original_data, description="Luôn dùng công cụ này đầu tiên để lấy lý thuyết Toán 6 gốc."),
@@ -37,7 +58,6 @@ def build_executor(api_key: str, model: str):
         Tool(name="CreateTest", func=create_review_test, description="Dùng công cụ này cuối cùng để tạo bài test 15 phút cho học sinh.")
     ]
 
-    # Cấu hình Prompt (Đã đưa phong cách dạy từ cơ bản của bạn vào làm kim chỉ nam)
     prompt = PromptTemplate.from_template("""
 Bạn là một AI Agent đóng vai trò Gia sư Toán lớp 6.
 Quy tắc dạy học: Luôn dạy bài cơ bản trước, tuyệt đối không đưa bài tập nâng cao trừ khi học sinh yêu cầu.
