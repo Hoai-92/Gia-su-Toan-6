@@ -15,24 +15,35 @@ def build_executor(api_key: str, model: str):
     )
 
     # --- TOOL 1: Quét file PDF Toán 6 ---
+    # --- TOOL 1 (HÀNG THẬT CẢI TIẾN): Quét file PDF Toán 6 thông minh ---
     def read_original_data(query: str) -> str:
         """Luôn dùng công cụ này đầu tiên để lấy lý thuyết Toán 6 gốc từ sách."""
         file_path = "toan_lop_6_tap_1.pdf"
         if not os.path.exists(file_path):
             return "Lỗi: Không tìm thấy file toan_lop_6_tap_1.pdf trong thư mục."
+        
         try:
             reader = PdfReader(file_path)
-            query_lower = query.lower()
+            # Kỹ thuật chuẩn hóa: Xóa toàn bộ khoảng trắng thừa và dấu xuống dòng của từ khóa
+            query_clean = " ".join(query.lower().split())
+            
             for i, page in enumerate(reader.pages):
                 text = page.extract_text()
-                if text and query_lower in text.lower():
-                    idx = text.lower().find(query_lower)
-                    # Cắt 200 ký tự trước và 800 ký tự sau chỗ tìm thấy để gom trọn ý
-                    start = max(0, idx - 200)
-                    end = min(len(text), idx + 800)
-                    snippet = text[start:end].replace('\n', ' ')
-                    return f"Đã tìm thấy lý thuyết ở trang {i+1} SGK:\n...{snippet}..."
-            return f"Quét toàn bộ sách nhưng không tìm thấy khái niệm '{query}'."
+                if text:
+                    # Chuẩn hóa toàn bộ trang sách PDF để đưa về cùng 1 chuẩn với từ khóa
+                    text_clean = " ".join(text.lower().split())
+                    
+                    # So khớp linh hoạt hơn
+                    if query_clean in text_clean:
+                        idx = text_clean.find(query_clean)
+                        start = max(0, idx - 200)
+                        end = min(len(text_clean), idx + 800)
+                        snippet = text_clean[start:end]
+                        return f"Đã tìm thấy lý thuyết ở trang {i+1} SGK:\n...{snippet}..."
+            
+            # Bơm thêm định hướng cho AI nếu vẫn không tìm thấy
+            return f"Đã quét 100% sách nhưng không tìm thấy cụm từ '{query}'. Yêu cầu học sinh cung cấp tên bài học cụ thể thay vì chỉ nói số bài (ví dụ: hỏi 'Quy tắc dấu ngoặc' thay vì 'bài 15')."
+            
         except Exception as e:
             return f"Lỗi khi đọc file PDF: {e}"
 
