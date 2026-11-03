@@ -35,7 +35,7 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         render_message(message)
 
-quick = st.button("🚀 Chạy Demo Đồ Án Cuối Cùng", use_container_width=True)
+quick = st.button("🚀 Chạy Demo Đồ Án", use_container_width=True)
 typed = st.chat_input("Hỏi gia sư bài toán bạn cần học...")
 question = QUESTION if quick else typed
 
