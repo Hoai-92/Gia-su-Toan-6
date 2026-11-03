@@ -1,31 +1,21 @@
 import os
-import re
-import unicodedata
-from pypdf import PdfReader
+import time
+from google import genai
 from langchain_classic.agents import AgentExecutor, create_react_agent
 from langchain_core.prompts import PromptTemplate
 from langchain_core.tools import Tool
 from langchain_google_genai import ChatGoogleGenerativeAI
-
-def normalize_text(text: str) -> str:
-    """Hàm chuẩn hóa: Khử dấu tiếng Việt và xóa khoảng trắng thừa để so khớp tuyệt đối."""
-    if not text:
-        return ""
-    # Ép về chữ không dấu (ví dụ: "Bài 5" -> "bai 5")
-    text_no_accents = unicodedata.normalize('NFKD', str(text)).encode('ASCII', 'ignore').decode('utf-8')
-    # Xóa dấu xuống dòng và các khoảng trắng kép
-    return re.sub(r'\s+', ' ', text_no_accents.lower()).strip()
 
 def build_executor(api_key: str, model: str):
     # Khởi tạo LLM chính điều phối Agent
     llm = ChatGoogleGenerativeAI(
         model=model,
         google_api_key=api_key,
-        temperature=0.2, # Giữ độ sáng tạo thấp để logic toán học chính xác
+        temperature=0.2, 
         max_retries=2,
     )
 
-    # --- TOOL 1 (HÀNG THẬT V2): Quét file PDF Toán 6 với tính năng Chuẩn hóa ---
+    # --- TOOL 1 (VIP): QUÉT PDF BẰNG GOOGLE GENAI NATIVE ---
     def read_original_data(query: str) -> str:
         """Luôn dùng công cụ này đầu tiên để lấy lý thuyết Toán 6 gốc từ sách."""
         file_path = "toan_lop_6_tap_1.pdf"
@@ -33,28 +23,38 @@ def build_executor(api_key: str, model: str):
             return "Lỗi: Không tìm thấy file toan_lop_6_tap_1.pdf trong thư mục."
         
         try:
-            reader = PdfReader(file_path)
-            # 1. Chuẩn hóa từ khóa của học sinh
-            query_clean = normalize_text(query)
+            # Dùng SDK Google GenAI chính chủ giống file test_nhanh.py của bác
+            client = genai.Client(api_key=api_key)
             
-            for i, page in enumerate(reader.pages):
-                raw_text = page.extract_text()
-                if raw_text:
-                    # 2. Chuẩn hóa toàn bộ text của trang sách PDF để tìm kiếm
-                    page_clean = normalize_text(raw_text)
-                    
-                    # 3. So khớp không dấu
-                    if query_clean in page_clean:
-                        # Nếu trúng mục tiêu, giao toàn bộ nội dung thô của trang đó (cắt bớt để tránh vượt giới hạn token)
-                        snippet = raw_text.replace('\n', ' ')[:2000]
-                        return f"Đã tìm thấy dữ liệu ở trang {i+1} SGK. Dưới đây là nội dung trang sách:\n{snippet}"
+            # 1. Tải file lên server
+            uploaded_file = client.files.upload(file=file_path)
             
-            # Bơm định hướng nếu không tìm thấy
-            return f"Đã quét 100% sách nhưng không thấy cụm từ '{query}'. Yêu cầu học sinh cung cấp tên chủ đề cụ thể (ví dụ: tập hợp, lũy thừa, số nguyên âm)."
+            # 2. Chờ file xử lý xong
+            while True:
+                file_info = client.files.get(name=uploaded_file.name)
+                if file_info.state == "ACTIVE":
+                    break
+                elif file_info.state == "FAILED":
+                    return "Lỗi: Máy chủ Gemini không thể xử lý file PDF này."
+                time.sleep(2)
+            
+            # 3. Yêu cầu Gemini trực tiếp đọc hiểu sách và tìm từ khóa
+            prompt_doc = f"Hãy tìm trong sách giáo khoa này phần kiến thức về: '{query}'. Nhiệm vụ của bạn là trích xuất chính xác lý thuyết, định nghĩa và tính chất liên quan. Nếu sách không có bài này hoặc không có nội dung này, hãy trả lời chính xác là 'Không tìm thấy'."
+            
+            response = client.models.generate_content(
+                model=model,
+                contents=[uploaded_file, prompt_doc]
+            )
+            
+            # 4. Xóa file trên server Google để dọn rác, tránh đầy bộ nhớ
+            client.files.delete(name=uploaded_file.name)
+            
+            return f"Kết quả quét từ sách giáo khoa thật:\n{response.text}"
+            
         except Exception as e:
-            return f"Lỗi đọc PDF: {e}"
+            return f"Lỗi khi dùng hệ thống Mắt thần Gemini đọc PDF: {e}"
 
-    # --- TOOL 2 (HÀNG THẬT): Gọi Gemini phụ sinh bài tập ---
+    # --- TOOL 2: Gọi Gemini phụ sinh bài tập ---
     def generate_similar_examples(query: str) -> str:
         """Dùng công cụ này sau khi đã có lý thuyết để tạo bài tập ví dụ."""
         llm_phu = ChatGoogleGenerativeAI(model=model, google_api_key=api_key, temperature=0.5)
@@ -62,7 +62,7 @@ def build_executor(api_key: str, model: str):
         response = llm_phu.invoke(prompt)
         return response.content
 
-    # --- TOOL 3 (HÀNG THẬT): Gọi Gemini phụ sinh đề kiểm tra ---
+    # --- TOOL 3: Gọi Gemini phụ sinh đề kiểm tra ---
     def create_review_test(query: str) -> str:
         """Dùng công cụ này cuối cùng để tạo bài test 15 phút cho học sinh."""
         llm_phu = ChatGoogleGenerativeAI(model=model, google_api_key=api_key, temperature=0.5)
@@ -76,13 +76,13 @@ def build_executor(api_key: str, model: str):
         Tool(name="CreateTest", func=create_review_test, description="Dùng công cụ này cuối cùng để tạo bài test 15 phút cho học sinh.")
     ]
 
-    # --- HỆ THỐNG PROMPT MỚI: Kỷ luật sắt với AI ---
+    # --- HỆ THỐNG PROMPT KỶ LUẬT ---
     prompt = PromptTemplate.from_template("""
 Bạn là một AI Agent đóng vai trò Gia sư Toán lớp 6. 
 Quy tắc dạy học BẮT BUỘC:
-1. Bạn đang dạy theo đúng MỘT cuốn sách duy nhất (đã được nạp trong công cụ ReadData). TUYỆT ĐỐI KHÔNG phân bua hay hỏi học sinh về các bộ sách khác (Kết nối tri thức, Cánh diều...).
-2. Khi học sinh hỏi bất cứ chủ đề hay số bài nào (ví dụ: "bài 5", "số nguyên"), BẠN PHẢI GỌI CÔNG CỤ ReadData để quét tài liệu gốc trước khi tự suy diễn.
-3. Luôn dạy bài cơ bản trước, tuyệt đối không đưa bài tập nâng cao trừ khi học sinh yêu cầu.
+1. Bạn đang dạy theo đúng MỘT cuốn sách duy nhất (đã được nạp trong công cụ ReadData). TUYỆT ĐỐI KHÔNG phân bua hay hỏi học sinh về các bộ sách khác.
+2. Khi học sinh hỏi bất cứ chủ đề hay số bài nào (ví dụ: "bài 5", "số nguyên"), BẠN PHẢI GỌI CÔNG CỤ ReadData để quét tài liệu gốc. Không được tự trả lời bằng trí nhớ.
+3. Luôn dạy bài cơ bản trước, tuyệt đối không đưa bài tập nâng cao.
 
 Lịch sử chat: {chat_history}
 
