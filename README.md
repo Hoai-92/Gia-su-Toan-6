@@ -66,3 +66,5 @@ python -m streamlit run app.py
 
 Trình duyệt sẽ tự động mở tại địa chỉ `http://localhost:8501`.
 Khóa API của bạn sẽ được tự động điền sẵn ở thanh cấu hình bên trái nhờ file `.env`. Bạn chỉ cần bấm "Chạy thử Demo" để xem Agent tự động tư duy và gọi các công cụ (Tools).
+
+Link deploy dự án: [gia-su-toan-6-azlr8waxatb7aef79uvja7.streamlit.app](https://gia-su-toan-6-azlr8waxatb7aef79uvja7.streamlit.app/)
